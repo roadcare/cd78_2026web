@@ -44,6 +44,10 @@
   .leaflet-popup-content td{padding:1px 6px;border-bottom:1px solid #eee;vertical-align:top}
   .leaflet-popup-content td.k{color:var(--muted);white-space:nowrap}
   .leaflet-popup-content img{max-width:260px;height:auto;display:block;margin-top:4px}
+  .pas-label{background:rgba(255,255,255,.88);border:1px solid #c9ced6;box-shadow:none;
+             font:11px/1.2 sans-serif;color:#1f2733;padding:1px 4px;border-radius:3px;white-space:nowrap}
+  .pas-label:before{display:none!important}
+  #map.hide-labels .pas-label{display:none}
   #err{display:none;position:fixed;z-index:3000;top:0;left:0;right:0;background:#b00020;
        color:#fff;padding:10px 14px;font:13px sans-serif}
 </style>
@@ -110,9 +114,22 @@ if(typeof Chart==='undefined') throw new Error("Chart.js non chargé — pas d'a
 var LAYERS = [{"name": "troncon_client", "label": "client.troncon_client", "color": "#1f78b4", "visible": true, "popup_img": false}, {"name": "pas_100", "label": "client.pas_100", "color": "#e31a1c", "visible": true, "popup_img": true}, {"name": "road_data", "label": "public.road_data", "color": "#b15928", "visible": false, "popup_img": true}];
 var PRIO_COLORS = {'P1':'#d7191c','P2':'#fdae61','P3':'#a6d96a','-':'#1a9641'};
 var ETATS = ['A-Bon','B-Moyen','C-Mauvais'];
-var ETAT_COLORS = {'A-Bon':'#1a9641','B-Moyen':'#fdae61','C-Mauvais':'#d7191c'};
+// pas colour by état surface: Bon = green, Moyen = yellow, Mauvais = red
+var SURF_COLORS = {'A-Bon':'#1a9641','B-Moyen':'#f4d03f','C-Mauvais':'#d7191c'};
+var LABEL_ZOOM = 17;
 function prioColor(p){ return PRIO_COLORS[p] || '#3388ff'; }
+function surfColor(e){ return SURF_COLORS[e] || '#3388ff'; }
 function eur(n){ return (n||0).toLocaleString('fr-FR'); }
+// label = priorité + technique d'entretien (only where there is work to do)
+function pasLabel(p){
+  if(!p.Priorite || p.Priorite==='-') return null;
+  var t = (p.Technique_entretien && p.Technique_entretien!=='-') ? ' · '+p.Technique_entretien : '';
+  return p.Priorite + t;
+}
+function updateLabels(){
+  var el=document.getElementById('map');
+  if(el) el.classList.toggle('hide-labels', map.getZoom() < LABEL_ZOOM);
+}
 // Skip features without usable geometry (guards against "Invalid LatLng").
 function hasGeom(f){ var g=f&&f.geometry; return !!(g && g.coordinates && g.coordinates.length); }
 
@@ -120,11 +137,12 @@ var map = L.map('map', {preferCanvas:true});
 L.tileLayer("https://{s}.tile.openstreetmap.de/{z}/{x}/{y}.png", {maxZoom:20, subdomains:"abc",
   attribution:"&copy; OpenStreetMap"}).addTo(map);
 var ctrl = L.control.layers(null, null, {collapsed:false}).addTo(map);
+map.on('zoomend', updateLabels);
 
 function popupHtml(props, withImg){
   var url = props.filename || props.image_url;  // road_data uses filename, pas_100 image_url
   var rows = Object.keys(props).filter(function(k){
-      return props[k]!==null && props[k]!=='' && k!=='image_url';})
+      return props[k]!==null && props[k]!=='' && k!=='image_url' && k!=='Etat_global';})
     .map(function(k){return '<tr><td class="k">'+k+'</td><td>'+props[k]+'</td></tr>';}).join('');
   var html = '<table>'+rows+'</table>';
   if(withImg && url){
@@ -174,11 +192,16 @@ function drawPas(feats){
   if(pasLayer){ map.removeLayer(pasLayer); ctrl.removeLayer(pasLayer); }
   pasLayer = L.geoJSON({type:'FeatureCollection',features:feats}, {
     filter: hasGeom,
-    style:function(f){return {color:prioColor(f.properties.Priorite),weight:5,opacity:.9};},
-    onEachFeature:function(f,l){l.bindPopup(popupHtml(f.properties,true),{maxWidth:340});}
+    style:function(f){return {color:surfColor(f.properties.Etat_surface),weight:5,opacity:.9};},
+    onEachFeature:function(f,l){
+      l.bindPopup(popupHtml(f.properties,true),{maxWidth:340});
+      var lab=pasLabel(f.properties);
+      if(lab) l.bindTooltip(lab,{permanent:true,direction:'center',className:'pas-label',opacity:1});
+    }
   });
-  ctrl.addOverlay(pasLayer, 'client.pas_100 (priorité)');
+  ctrl.addOverlay(pasLayer, 'client.pas_100 (état surface)');
   pasLayer.addTo(map);
+  updateLabels();
 }
 
 // ---- filters population ----
