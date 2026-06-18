@@ -126,11 +126,9 @@ var LABEL_ZOOM = 17;
 function prioColor(p){ return PRIO_COLORS[p] || '#3388ff'; }
 function surfColor(e){ return SURF_COLORS[e] || '#3388ff'; }
 function eur(n){ return (n||0).toLocaleString('fr-FR'); }
-// label = priorité + technique d'entretien (only where there is work to do)
+// label = "priorité : technique d'entretien" (each pas shows its own data)
 function pasLabel(p){
-  if(!p.Priorite || p.Priorite==='-') return null;
-  var t = (p.Technique_entretien && p.Technique_entretien!=='-') ? ' · '+p.Technique_entretien : '';
-  return p.Priorite + t;
+  return (p.Priorite || '-') + ' : ' + (p.Technique_entretien || '-');
 }
 function updateLabels(){
   var el=document.getElementById('map');
