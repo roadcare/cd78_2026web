@@ -54,6 +54,20 @@
   .deg-legend b{display:block;margin-bottom:4px}
   .deg-legend i{display:inline-block;width:11px;height:11px;margin-right:5px;
                 vertical-align:-1px;border-radius:2px}
+  #tablewrap{position:fixed;left:380px;right:0;bottom:0;z-index:1200;background:#fff;
+             border-top:1px solid var(--line);font:12px sans-serif;box-shadow:0 -1px 6px rgba(0,0,0,.15)}
+  #tablebar{padding:5px 10px;cursor:pointer;background:#eef1f6;font-weight:600;user-select:none}
+  #tablewrap.collapsed .tbl-body{display:none}
+  .tbl-body{max-height:42vh;overflow:auto}
+  table.pt{border-collapse:collapse;width:100%}
+  table.pt th{position:sticky;background:#f5f6f8;padding:3px 6px;border-bottom:1px solid var(--line);
+              white-space:nowrap;text-align:left}
+  table.pt thead tr:first-child th{top:0;cursor:pointer}
+  table.pt thead tr.tbl-filter th{top:25px}
+  table.pt th input{width:9ch;font:11px inherit;padding:1px 3px;border:1px solid var(--line);border-radius:3px}
+  table.pt td{padding:2px 6px;border-bottom:1px solid #eee;white-space:nowrap}
+  table.pt tr.sel{background:#fde9a9}
+  .zbtn{cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:3px;padding:0 5px}
   #err{display:none;position:fixed;z-index:3000;top:0;left:0;right:0;background:#b00020;
        color:#fff;padding:10px 14px;font:13px sans-serif}
 </style>
@@ -105,6 +119,14 @@
     </div>
   </aside>
   <div id="map"></div>
+</div>
+
+<div id="tablewrap" class="collapsed">
+  <div id="tablebar"><span id="tbl-arrow">▸</span> Tableau pas_100 (<span id="tbl-count">0</span>)
+    — cliquer pour déplier ; ⊙ = zoom sur la ligne</div>
+  <div class="tbl-body">
+    <table class="pt"><thead id="pt-head"></thead><tbody id="pt-body"></tbody></table>
+  </div>
 </div>
 
 <script src="troncon_client.js"></script>
@@ -226,7 +248,7 @@ function drawPas(feats){
   if(pasLayer){ map.removeLayer(pasLayer); ctrl.removeLayer(pasLayer); }
   pasLayer = L.geoJSON({type:'FeatureCollection',features:feats}, {
     filter: hasGeom,
-    style:function(f){return {color:surfColor(f.properties.Etat_surface),weight:5,opacity:.9};},
+    style:function(f){return {color:surfColor(f.properties.Etat_global),weight:5,opacity:.9};},
     onEachFeature:function(f,l){
       l.bindPopup(popupHtml(f.properties,true),{maxWidth:340});
       var lab=pasLabel(f.properties);
@@ -323,11 +345,83 @@ function zoomToPas(){
   if(!pasLayer) return;
   try{ var bb=pasLayer.getBounds(); if(bb.isValid()) map.fitBounds(bb,{padding:[30,30]}); }catch(e){}
 }
+
+// ---- table view of pas_100 ----
+var TABLE_COLS = ['id','axe','cumuld','cumulf','avg_width','surface',
+  'Note_structure','Etat_structure','Note_surface','Etat_surface',
+  'Note_globale','Etat_global','Priorite','Technique_entretien',
+  'Cout_surfacique','Cout_Total'];
+var pasById = {};
+pasData.features.forEach(function(f){ pasById[f.properties.id]=f; });
+var tsort = {col:null, dir:1};
+
+function buildTableHead(){
+  var head=document.getElementById('pt-head');
+  head.innerHTML =
+    '<tr><th></th>'+TABLE_COLS.map(function(c){return '<th data-col="'+c+'">'+c+'</th>';}).join('')+'</tr>'+
+    '<tr class="tbl-filter"><th></th>'+TABLE_COLS.map(function(c){return '<th><input id="tf_'+c+'" placeholder="filtre"/></th>';}).join('')+'</tr>';
+  Array.prototype.forEach.call(head.querySelectorAll('th[data-col]'), function(th){
+    th.addEventListener('click', function(){
+      var c=th.dataset.col;
+      if(tsort.col===c) tsort.dir=-tsort.dir; else { tsort.col=c; tsort.dir=1; }
+      buildTable(filteredPas());
+    });
+  });
+  TABLE_COLS.forEach(function(c){
+    document.getElementById('tf_'+c).addEventListener('input', function(){ buildTable(filteredPas()); });
+  });
+}
+
+function buildTable(feats){
+  var tf={};
+  TABLE_COLS.forEach(function(c){ var el=document.getElementById('tf_'+c);
+    if(el && el.value.trim()) tf[c]=el.value.trim().toLowerCase(); });
+  var rows=feats.filter(function(f){ var p=f.properties;
+    return TABLE_COLS.every(function(c){ if(!tf[c]) return true;
+      var v=p[c]; return v!=null && String(v).toLowerCase().indexOf(tf[c])>=0; }); });
+  if(tsort.col){ var sc=tsort.col, d=tsort.dir;
+    rows.sort(function(a,b){ var x=a.properties[sc], y=b.properties[sc];
+      if(x==null) return 1; if(y==null) return -1;
+      if(typeof x==='number' && typeof y==='number') return (x-y)*d;
+      return String(x).localeCompare(String(y))*d; }); }
+  document.getElementById('pt-body').innerHTML = rows.map(function(f){ var p=f.properties;
+    var tds=TABLE_COLS.map(function(c){ var v=p[c];
+      if(typeof v==='number') v=Math.round(v*100)/100;
+      return '<td>'+(v==null?'':v)+'</td>'; }).join('');
+    return '<tr data-id="'+p.id+'"><td><button class="zbtn" data-id="'+p.id+'" title="Zoom">⊙</button></td>'+tds+'</tr>';
+  }).join('');
+  document.getElementById('tbl-count').textContent = rows.length;
+}
+
+function zoomToFeature(id){
+  var f=pasById[id]; if(!f) return;
+  try{ var b=L.geoJSON(f).getBounds();
+    if(b.isValid()) map.fitBounds(b,{padding:[40,40], maxZoom:18}); }catch(e){}
+}
+
+buildTableHead();
+(function(){
+  var body=document.getElementById('pt-body');
+  body.addEventListener('click', function(e){
+    var tr=e.target.closest ? e.target.closest('tr') : null;
+    if(tr){ Array.prototype.forEach.call(body.querySelectorAll('tr.sel'),
+              function(r){r.classList.remove('sel');}); tr.classList.add('sel'); }
+    var btn=e.target.closest ? e.target.closest('.zbtn') : null;
+    if(btn){ zoomToFeature(+btn.getAttribute('data-id')); }
+  });
+  var bar=document.getElementById('tablebar');
+  bar.addEventListener('click', function(){
+    var w=document.getElementById('tablewrap'); w.classList.toggle('collapsed');
+    document.getElementById('tbl-arrow').textContent = w.classList.contains('collapsed')?'▸':'▾';
+  });
+})();
+
 function update(fit){
   var feats = filteredPas();
   drawPas(feats);
   updateKPIs(feats);
   updateCharts(feats);
+  buildTable(feats);
   if(fit) zoomToPas();
 }
 
