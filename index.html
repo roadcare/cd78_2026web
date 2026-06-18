@@ -48,6 +48,12 @@
              font:11px/1.2 sans-serif;color:#1f2733;padding:1px 4px;border-radius:3px;white-space:nowrap}
   .pas-label:before{display:none!important}
   #map.hide-labels .pas-label{display:none}
+  .deg-legend{background:rgba(255,255,255,.93);padding:6px 9px;border-radius:6px;
+              font:11px/1.35 sans-serif;max-height:46vh;overflow:auto;
+              box-shadow:0 1px 4px rgba(0,0,0,.3)}
+  .deg-legend b{display:block;margin-bottom:4px}
+  .deg-legend i{display:inline-block;width:11px;height:11px;margin-right:5px;
+                vertical-align:-1px;border-radius:2px}
   #err{display:none;position:fixed;z-index:3000;top:0;left:0;right:0;background:#b00020;
        color:#fff;padding:10px 14px;font:13px sans-serif}
 </style>
@@ -82,7 +88,7 @@
     </div>
 
     <div class="card">
-      <h2>États — surface / structure / global (longueur m)</h2>
+      <h2>État global (longueur m)</h2>
       <div class="chartbox"><canvas id="c_etats"></canvas></div>
     </div>
     <div class="card">
@@ -90,7 +96,7 @@
       <div class="chartbox"><canvas id="c_prio"></canvas></div>
     </div>
     <div class="card">
-      <h2>Type de travaux — nombre de segments</h2>
+      <h2>Type de travaux — surface (m²)</h2>
       <div class="chartbox" style="height:200px"><canvas id="c_tech"></canvas></div>
     </div>
     <div class="card">
@@ -111,7 +117,7 @@ try{
 if(typeof L==='undefined') throw new Error("Leaflet (leaflet.js) non chargé — pas d'accès au CDN ? Le dossier devrait contenir lib/leaflet.js.");
 if(typeof Chart==='undefined') throw new Error("Chart.js non chargé — pas d'accès au CDN ? Le dossier devrait contenir lib/chart.umd.min.js.");
 
-var LAYERS = [{"name": "troncon_client", "label": "client.troncon_client", "color": "#1f78b4", "visible": true, "popup_img": false}, {"name": "pas_100", "label": "client.pas_100", "color": "#e31a1c", "visible": true, "popup_img": true}, {"name": "road_data", "label": "public.road_data", "color": "#b15928", "visible": false, "popup_img": true}];
+var LAYERS = [{"name": "troncon_client", "label": "ref_cd78", "color": "#1f78b4", "visible": true, "popup_img": false}, {"name": "pas_100", "label": "client.pas_100", "color": "#e31a1c", "visible": true, "popup_img": true}, {"name": "road_data", "label": "degradations", "color": "#b15928", "visible": false, "popup_img": true}];
 var PRIO_COLORS = {'P1':'#d7191c','P2':'#fdae61','P3':'#a6d96a','-':'#1a9641'};
 var ETATS = ['A-Bon','B-Moyen','C-Mauvais'];
 // pas colour by état surface: Bon = green, Moyen = yellow, Mauvais = red
@@ -130,6 +136,19 @@ function updateLabels(){
   var el=document.getElementById('map');
   if(el) el.classList.toggle('hide-labels', map.getZoom() < LABEL_ZOOM);
 }
+// distinct colour per degradations sous_classe (built from the data)
+var SOUS_PALETTE = ['#e6194b','#3cb44b','#ffe119','#4363d8','#f58231','#911eb4',
+  '#42d4f4','#f032e6','#bfef45','#fabed4','#469990','#dcbeff','#9a6324','#800000',
+  '#aaffc3','#808000','#000075','#a9a9a9','#ff7f00'];
+var sousColorMap = {};
+(function(){
+  var d = window['LAYER_road_data']; if(!d) return;
+  var vals = {};
+  d.features.forEach(function(f){ var v=f.properties.sous_classe; if(v) vals[v]=1; });
+  Object.keys(vals).sort().forEach(function(v,i){
+    sousColorMap[v] = SOUS_PALETTE[i % SOUS_PALETTE.length]; });
+})();
+function sousColor(v){ return sousColorMap[v] || '#888'; }
 // Skip features without usable geometry (guards against "Invalid LatLng").
 function hasGeom(f){ var g=f&&f.geometry; return !!(g && g.coordinates && g.coordinates.length); }
 
@@ -142,7 +161,7 @@ map.on('zoomend', updateLabels);
 function popupHtml(props, withImg){
   var url = props.filename || props.image_url;  // road_data uses filename, pas_100 image_url
   var rows = Object.keys(props).filter(function(k){
-      return props[k]!==null && props[k]!=='' && k!=='image_url' && k!=='Etat_global';})
+      return props[k]!==null && props[k]!=='' && k!=='image_url' && k!=='filename' && k!=='Etat_global';})
     .map(function(k){return '<tr><td class="k">'+k+'</td><td>'+props[k]+'</td></tr>';}).join('');
   var html = '<table>'+rows+'</table>';
   if(withImg && url){
@@ -155,10 +174,15 @@ function popupHtml(props, withImg){
 function buildContext(cfg){
   var data = window['LAYER_'+cfg.name];
   if(!data) return null;
+  // degradations: distinct colour per sous_classe; others: fixed colour
+  var styleFn = cfg.name==='road_data'
+    ? function(f){ var col=sousColor(f.properties.sous_classe);
+                   return {color:col, weight:1, fillColor:col, fillOpacity:.55}; }
+    : {color:cfg.color, weight: cfg.name==='troncon_client'?2:1,
+       fillColor:cfg.color, fillOpacity:.3};
   var lyr = L.geoJSON(data, {
     filter: hasGeom,
-    style: {color:cfg.color, weight: cfg.name==='troncon_client'?2:1,
-            fillColor:cfg.color, fillOpacity:.3},
+    style: styleFn,
     pointToLayer:function(f,ll){return L.circleMarker(ll,
         {radius:3,color:cfg.color,weight:1,fillOpacity:.7});},
     onEachFeature:function(f,l){l.bindPopup(popupHtml(f.properties,cfg.popup_img),{maxWidth:340});}
@@ -168,6 +192,18 @@ function buildContext(cfg){
   return lyr;
 }
 LAYERS.filter(function(c){return c.name!=='pas_100';}).forEach(buildContext);
+
+// legend for the degradations layer (shown only when that layer is active)
+var degLegend = L.control({position:'bottomright'});
+degLegend.onAdd = function(){
+  var div = L.DomUtil.create('div','deg-legend');
+  div.innerHTML = '<b>Dégradations — sous_classe</b>' +
+    Object.keys(sousColorMap).sort().map(function(v){
+      return '<div><i style="background:'+sousColorMap[v]+'"></i>'+v+'</div>'; }).join('');
+  return div;
+};
+map.on('overlayadd', function(e){ if(e.name==='degradations') degLegend.addTo(map); });
+map.on('overlayremove', function(e){ if(e.name==='degradations') map.removeControl(degLegend); });
 
 // ---- pas_100 analytic layer (filtered + coloured by priorité) ----
 var pasData = window['LAYER_pas_100'] || {features:[]};
@@ -199,7 +235,7 @@ function drawPas(feats){
       if(lab) l.bindTooltip(lab,{permanent:true,direction:'center',className:'pas-label',opacity:1});
     }
   });
-  ctrl.addOverlay(pasLayer, 'client.pas_100 (état surface)');
+  ctrl.addOverlay(pasLayer, 'Etat et travaux');
   pasLayer.addTo(map);
   updateLabels();
 }
@@ -231,7 +267,7 @@ function mkBar(id, opts){
       plugins:{legend:{display:opts.legend!==false,labels:{boxWidth:12,font:{size:10}}}}},
       opts.options||{})});
 }
-ch.etats = mkBar('c_etats', {});
+ch.etats = mkBar('c_etats', {legend:false});
 ch.prio  = mkBar('c_prio', {legend:false});
 ch.tech  = mkBar('c_tech', {legend:false, options:{indexAxis:'y'}});
 ch.budtech = mkBar('c_budtech', {legend:false, options:{indexAxis:'y'}});
@@ -245,14 +281,13 @@ function sumBy(feats, key, valKey){
 }
 
 function updateCharts(feats){
-  // états — grouped bar over A/B/C, y = total length (m) of the segments
+  // état global only — y = total length (m), one colour per état
   function etatLen(k){return ETATS.map(function(e){
     return feats.filter(function(f){return f.properties[k]===e;})
       .reduce(function(s,f){return s+((Number(f.properties.cumulf)-Number(f.properties.cumuld))||0);},0);});}
   ch.etats.data = {labels:ETATS, datasets:[
-    {label:'Surface',  data:etatLen('Etat_surface'),  backgroundColor:'#4e79a7'},
-    {label:'Structure',data:etatLen('Etat_structure'),backgroundColor:'#f28e2b'},
-    {label:'Global',   data:etatLen('Etat_global'),   backgroundColor:'#59a14f'}]};
+    {label:'longueur (m)', data:etatLen('Etat_global'),
+     backgroundColor:ETATS.map(surfColor)}]};
   ch.etats.update();
 
   // budget par priorité
@@ -262,15 +297,15 @@ function updateCharts(feats){
     backgroundColor:pk.map(prioColor)}]};
   ch.prio.update();
 
-  // type de travaux — count (exclude '-')
-  var tc = countBy(feats,'Technique_entretien'); delete tc['-'];
-  var tk = Object.keys(tc).sort(function(a,b){return tc[b]-tc[a];});
-  ch.tech.data = {labels:tk, datasets:[{label:'segments', data:tk.map(function(t){return tc[t];}),
-    backgroundColor:'#4e79a7'}]};
+  // type de travaux — total surface (m²) per technique (exclude no-work)
+  var ts = sumBy(feats,'Technique_entretien','surface'); delete ts['-']; delete ts['RAS'];
+  var tk = Object.keys(ts).sort(function(a,b){return ts[b]-ts[a];});
+  ch.tech.data = {labels:tk, datasets:[{label:'surface (m²)',
+    data:tk.map(function(t){return Math.round(ts[t]);}), backgroundColor:'#4e79a7'}]};
   ch.tech.update();
 
   // budget par technique
-  var bt = sumBy(feats,'Technique_entretien','Cout_Total'); delete bt['-'];
+  var bt = sumBy(feats,'Technique_entretien','Cout_Total'); delete bt['-']; delete bt['RAS'];
   var bk = Object.keys(bt).sort(function(a,b){return bt[b]-bt[a];});
   ch.budtech.data = {labels:bk, datasets:[{label:'€', data:bk.map(function(t){return bt[t];}),
     backgroundColor:'#e15759'}]};
